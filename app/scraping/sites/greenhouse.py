@@ -17,7 +17,7 @@ def _candidate_board_tokens(hostname: str) -> List[str]:
         candidates.append(domain)
         # Heuristic: many companies use "with<name>" domains but the GH board token is the company name
         if domain.startswith("with") and len(domain) > 4:
-            candidates.append(domain[4:])  # e.g., waymo
+            candidates.append(domain[4:])
     # Deduplicate preserving order
     seen = set()
     uniq: List[str] = []
