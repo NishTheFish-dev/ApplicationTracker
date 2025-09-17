@@ -44,10 +44,53 @@ def add(
     url: str,
     status: Status = typer.Option(Status.applied, help="Application status"),
     date_applied: Optional[str] = typer.Option(None, help="Date applied (default: today)"),
+    title: Optional[str] = typer.Option(None, help="Override parsed job title (use with --no-fetch if needed)"),
+    employer: Optional[str] = typer.Option(None, help="Override parsed employer (use with --no-fetch if needed)"),
+    no_fetch: bool = typer.Option(
+        False,
+        help="Skip downloading the page; rely on --title/--employer overrides.",
+    ),
 ):
     settings = get_settings()
-    html = fetch_url(url)
-    parsed = parse_job_from_html(html, url)
+    parsed: dict
+    if no_fetch:
+        parsed = {"title": title, "employer": employer}
+        if not title or not employer:
+            typer.secho(
+                "Note: --no-fetch supplied but --title/--employer not fully provided; saving with blanks.",
+                fg=typer.colors.YELLOW,
+            )
+    else:
+        # Fetch page HTML. Some career sites aggressively block bots; we use a browser-like UA and fallbacks.
+        try:
+            html = fetch_url(url)
+            parsed = parse_job_from_html(html, url)
+        except Exception as e:
+            if title or employer:
+                # Proceed with provided overrides despite fetch failure
+                parsed = {"title": title, "employer": employer}
+                typer.secho(
+                    "Fetch failed, proceeding with provided --title/--employer overrides.",
+                    fg=typer.colors.YELLOW,
+                )
+            else:
+                typer.secho(f"Failed to fetch URL: {url}", fg=typer.colors.RED)
+                typer.echo(str(e))
+                typer.secho(
+                    "Tips: some sites block non-browsers. Try one of:\n"
+                    "  - Set APPTRACKER_USER_AGENT to your browser's User-Agent string and retry.\n"
+                    "  - Set APPTRACKER_FETCH_PROXY_READER (e.g., https://r.jina.ai) to bypass strict blockers.\n"
+                    "  - Run with --verbose to see more details.\n"
+                    "  - Use --no-fetch with --title and --employer to add manually.",
+                    fg=typer.colors.YELLOW,
+                )
+                raise typer.Exit(code=1)
+
+    # Apply overrides if provided
+    if title:
+        parsed["title"] = title
+    if employer:
+        parsed["employer"] = employer
 
     if not parsed.get("title"):
         typer.secho("Warning: Could not confidently extract job title. You can edit later.", fg=typer.colors.YELLOW)

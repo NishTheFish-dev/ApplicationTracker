@@ -16,7 +16,17 @@ class Settings(BaseSettings):
     )
     DEBUG: bool = Field(default=False)
     REQUEST_TIMEOUT_SECONDS: int = Field(default=20)
-    USER_AGENT: str = Field(default="ApplicationTracker/0.1 (+https://example.local)")
+    USER_AGENT: str = Field(
+        default="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        description="User-Agent sent when fetching pages; override via APPTRACKER_USER_AGENT",
+    )
+    FETCH_PROXY_READER: str = Field(
+        default="",
+        description=(
+            "Optional proxy reader base URL to bypass strict bot blocks (e.g., 'https://r.jina.ai'). "
+            "When set, the fetcher will retry via this reader on 403 responses."
+        ),
+    )
 
 
 @lru_cache()

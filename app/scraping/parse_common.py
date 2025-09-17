@@ -4,6 +4,8 @@ from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 from tldextract import extract as tldextract_extract
 from .sites.greenhouse import parse_greenhouse_from_url
+from urllib.parse import urlparse
+import re
 
 
 def _extract_source_site(url: str) -> str:
@@ -87,10 +89,50 @@ def parse_job_from_html(html: str, url: str) -> dict:
         if ogt and ogt.get("content"):
             title = ogt["content"][:300]
 
+    # 3a) Fallback to <title> tag if still missing
+    if not title and soup.title and soup.title.string:
+        full_title = (soup.title.get_text(strip=True) or "")[:300]
+        # Try to split common patterns like "Job Title - Company" or "Job Title | Company"
+        for sep in [" | ", " - ", " – ", " — "]:
+            if sep in full_title:
+                candidate = full_title.split(sep)[0].strip()
+                if candidate:
+                    title = candidate[:300]
+                    break
+        if not title and full_title:
+            title = full_title
+
     employer = None
     site_name = soup.find("meta", property="og:site_name")
     if site_name and site_name.get("content"):
         employer = site_name["content"][:300]
+
+    # 3b) If employer still missing, infer from hostname (e.g., careers.caterpillar.com -> Caterpillar)
+    if not employer:
+        ext = tldextract_extract(url)
+        if ext.domain:
+            employer = ext.domain.title()[:300]
+
+    # 3c) If title still missing (e.g., proxy-reader text), derive from URL slug
+    if not title:
+        parsed = urlparse(url)
+        parts = [p for p in (parsed.path or "/").strip("/").split("/") if p]
+        # Remove common non-title segments
+        skip = {"jobs", "job", "careers", "en", "en-us", "en_us", "en-US", "en_US"}
+        def _is_id_segment(seg: str) -> bool:
+            return bool(re.fullmatch(r"[rR]?\d{4,}", seg))
+        candidates = [p for p in parts if p not in skip and not _is_id_segment(p)]
+        seg: Optional[str] = None
+        for s in reversed(candidates):
+            if "-" in s or "_" in s:
+                seg = s
+                break
+        if seg is None and candidates:
+            seg = candidates[-1]
+        if seg:
+            raw = seg.replace("-", " ").replace("_", " ").strip()
+            if raw:
+                title = raw.title()[:300]
 
     return {
         "title": title,
