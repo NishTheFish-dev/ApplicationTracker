@@ -5,6 +5,8 @@ from typing import Optional, List, Dict, Any
 
 import pandas as pd
 from openpyxl.utils import get_column_letter
+import re
+from difflib import SequenceMatcher
 
 from ..schemas import JobApplicationCreate
 from ..domain import Status
@@ -192,3 +194,83 @@ def _set_column_widths(ws, df: pd.DataFrame) -> None:
     for idx, col_name in enumerate(df.columns, start=1):
         letter = get_column_letter(idx)
         ws.column_dimensions[letter].width = widths.get(col_name, 20)
+
+
+def search(
+    path: str,
+    item_id: Optional[int] = None,
+    title: Optional[str] = None,
+    employer: Optional[str] = None,
+    limit: Optional[int] = 20,
+) -> List[Dict[str, Any]]:
+    """Search applications by id, title regex, and/or employer regex.
+
+    - Matching is case-insensitive.
+    - Title/employer use regex substring matching; invalid regex fall back to literal.
+    - Results are sorted by closeness score (difflib ratio) then by id desc.
+    """
+    ensure_file(path)
+    df = _read_df(path)
+    if df.empty:
+        return []
+
+    mask = pd.Series(True, index=df.index)
+
+    # ID filter
+    if item_id is not None:
+        mask &= pd.to_numeric(df["id"], errors="coerce") == int(item_id)
+
+    def _compile(pat: str) -> str:
+        try:
+            re.compile(pat)
+            return pat
+        except re.error:
+            return re.escape(pat)
+
+    # Title filter
+    if title:
+        pat = _compile(title)
+        mask &= df["title"].fillna("").str.contains(pat, case=False, regex=True)
+
+    # Employer filter
+    if employer:
+        pat = _compile(employer)
+        mask &= df["employer"].fillna("").str.contains(pat, case=False, regex=True)
+
+    results = df[mask].copy()
+    if results.empty:
+        return []
+
+    def _ci(val: Any) -> str:
+        return "" if pd.isna(val) else str(val).lower()
+
+    def _similarity(a: Optional[str], b: str) -> float:
+        if not a:
+            return 0.0
+        return SequenceMatcher(None, a.lower(), b).ratio()
+
+    # Score rows based on similarity to queries
+    scores: List[float] = []
+    def _row_score(row: pd.Series) -> float:
+        s = 0.0
+        if title:
+            s = max(s, _similarity(title, _ci(row.get("title"))))
+        if employer:
+            s = max(s, _similarity(employer, _ci(row.get("employer"))))
+        if item_id is not None:
+            # Boost exact id matches
+            rid = row.get("id")
+            try:
+                if int(rid) == int(item_id):
+                    s = max(s, 1.0)
+            except Exception:
+                pass
+        # If no text criteria provided, keep stable ordering
+        return s
+
+    results["_score"] = results.apply(_row_score, axis=1)
+    results = results.sort_values(by=["_score", "id"], ascending=[False, False])
+    if limit is not None and limit > 0:
+        results = results.head(limit)
+    results = results.drop(columns=["_score"])
+    return results.to_dict(orient="records")

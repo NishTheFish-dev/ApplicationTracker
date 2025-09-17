@@ -15,6 +15,7 @@ from ..storage.excel_storage import (
     list_applications as xl_list,
     update_status as xl_update_status,
     remove_by_id as xl_remove_by_id,
+    search as xl_search,
     export_to_excel as xl_export_excel,
     export_to_csv as xl_export_csv,
 )
@@ -81,6 +82,41 @@ def list_cmd(status: Optional[Status] = typer.Option(None, help="Filter by statu
     items = xl_list(settings.EXCEL_PATH, status=status)
     if not items:
         typer.secho("No applications found.", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=0)
+    for obj in items:
+        date_applied = obj.get("date_applied")
+        date_applied_str = str(date_applied.date() if hasattr(date_applied, "date") else date_applied) if date_applied else "-"
+        typer.echo(
+            f"#{obj.get('id')} | {obj.get('title')} @ {obj.get('employer')} | {obj.get('status')} | applied: {date_applied_str}"
+        )
+
+
+@cli.command("search")
+def search_cmd(
+    item_id: Optional[int] = typer.Option(None, "--id", help="Search by numeric ID"),
+    title: Optional[str] = typer.Option(None, "--title", help="Search by job title (regex, case-insensitive)"),
+    employer: Optional[str] = typer.Option(None, "--employer", help="Search by employer (regex, case-insensitive)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum results to show"),
+):
+    """Search applications by id, title, or employer.
+
+    Regex is supported for title and employer. Matching is case-insensitive.
+    Results are ranked by similarity and id (desc).
+    """
+    if item_id is None and not title and not employer:
+        typer.secho("Provide at least one of --id, --title, --employer", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=2)
+
+    settings = get_settings()
+    items = xl_search(
+        settings.EXCEL_PATH,
+        item_id=item_id,
+        title=title,
+        employer=employer,
+        limit=limit,
+    )
+    if not items:
+        typer.secho("No matches found.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=0)
     for obj in items:
         date_applied = obj.get("date_applied")

@@ -17,7 +17,7 @@ def parse_job_from_html(html: str, url: str) -> dict:
     """Extract job fields.
 
     Strategy:
-    1) Greenhouse API when the URL includes a gh_jid (e.g., Waymo careers).
+    1) Greenhouse API when the URL includes a gh_jid
     2) schema.org JSON-LD JobPosting in the HTML.
     3) Heuristic fallback from HTML tags.
 

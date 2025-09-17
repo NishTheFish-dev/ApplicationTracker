@@ -44,6 +44,14 @@ def _fetch_greenhouse_job(job_id: str, board_token: str) -> Optional[Dict[str, A
         return None
 
 
+def _pretty_token(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+    # Replace common separators and title-case
+    t = token.replace("-", " ").replace("_", " ").strip()
+    return t.title() if t else None
+
+
 def parse_greenhouse_from_url(url: str) -> Optional[Dict[str, Any]]:
     """If URL references a Greenhouse-hosted job (via gh_jid), return parsed fields.
 
@@ -52,16 +60,42 @@ def parse_greenhouse_from_url(url: str) -> Optional[Dict[str, Any]]:
     parsed = urlparse(url)
     qs = parse_qs(parsed.query)
     job_ids = qs.get("gh_jid") or qs.get("gh_src")
-    job_id = job_ids[0] if job_ids else None
-    if not job_id:
+    job_id_qs = job_ids[0] if job_ids else None
+
+    # 1) Direct Greenhouse URL with path token/id, e.g. /{token}/jobs/{id}
+    token_path: Optional[str] = None
+    job_id_path: Optional[str] = None
+    try:
+        host = (parsed.hostname or "").lower()
+        if "greenhouse.io" in host:
+            parts = [p for p in (parsed.path or "/").strip("/").split("/") if p]
+            # Pattern: /{token}/jobs/{id}[/*]
+            if len(parts) >= 3 and parts[1] == "jobs" and parts[2].isdigit():
+                token_path = parts[0]
+                job_id_path = parts[2]
+    except Exception:
+        pass
+
+    if token_path and job_id_path:
+        gh = _fetch_greenhouse_job(job_id_path, token_path)
+        if gh:
+            title = gh.get("title")
+            employer = gh.get("company_name") or _pretty_token(token_path)
+            return {
+                "title": (title[:300] if isinstance(title, str) else title),
+                "employer": (employer[:300] if isinstance(employer, str) else employer),
+            }
+
+    # 2) Fallback: gh_jid in query with heuristic tokens from hostname
+    if not job_id_qs:
         return None
 
     tokens = _candidate_board_tokens(parsed.hostname or "")
     for token in tokens:
-        gh = _fetch_greenhouse_job(job_id, token)
+        gh = _fetch_greenhouse_job(job_id_qs, token)
         if gh:
             title = gh.get("title")
-            employer = gh.get("company_name") or None
+            employer = gh.get("company_name") or _pretty_token(token)
             return {
                 "title": (title[:300] if isinstance(title, str) else title),
                 "employer": (employer[:300] if isinstance(employer, str) else employer),
