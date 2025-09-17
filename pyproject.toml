@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "application-tracker"
+version = "0.1.0"
+description = "CLI to track job applications by scraping job postings and storing in an Excel workbook (.xlsx)."
+readme = "README.md"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+keywords = ["jobs", "scraping", "excel", "xlsx", "tracker", "cli"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+dependencies = [
+  "typer>=0.12.5",
+  "requests>=2.32.3",
+  "beautifulsoup4>=4.12.3",
+  "lxml>=5.3.0",
+  "pydantic>=2.8.2",
+  "pydantic-settings>=2.3.4",
+  "dateparser>=1.2.0",
+  "tldextract>=5.1.2",
+  "pandas>=2.2.2",
+  "openpyxl>=3.1.5",
+  "tenacity>=9.0.0",
+]
+
+[project.scripts]
+apptracker = "app.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["tests*"]
