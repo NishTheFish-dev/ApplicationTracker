@@ -35,6 +35,7 @@ dependencies = [
 
 [project.scripts]
 apptracker = "app.cli.main:cli"
+app = "app.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

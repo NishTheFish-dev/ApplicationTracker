@@ -4,8 +4,11 @@ from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 from tldextract import extract as tldextract_extract
 from .sites.greenhouse import parse_greenhouse_from_url
+from .sites.ultipro import parse_ultipro_from_html
 from urllib.parse import urlparse
 import re
+import requests
+from ..config import get_settings
 
 
 def _extract_source_site(url: str) -> str:
@@ -36,6 +39,7 @@ def parse_job_from_html(html: str, url: str) -> dict:
             "source_site": _extract_source_site(url),
         }
     soup = BeautifulSoup(html, "lxml")
+    employer_hint: Optional[str] = None
 
     # 2) JSON-LD JobPosting
     for script in soup.find_all("script", type="application/ld+json"):
@@ -79,6 +83,51 @@ def parse_job_from_html(html: str, url: str) -> dict:
                 "source_site": _extract_source_site(url),
             }
 
+    # 2b) UltiPro/UKG Pro JobBoard pages often render via JS; try site-specific extraction
+    try:
+        ext = tldextract_extract(url)
+        if ext.domain == "ultipro":
+            up = parse_ultipro_from_html(html, url)
+            if up.get("title"):
+                return {
+                    "title": up.get("title"),
+                    "employer": up.get("employer"),
+                    "date_posted": None,
+                    "location": None,
+                    "source_site": _extract_source_site(url),
+                }
+            if up.get("employer"):
+                employer_hint = up.get("employer")
+
+            # Forced reader-proxy refetch if title missing
+            settings = get_settings()
+            proxy_base = (settings.FETCH_PROXY_READER or "").strip() or "https://r.jina.ai"
+            try:
+                proxy_url = proxy_base.rstrip("/") + "/" + url
+                resp_reader = requests.get(
+                    proxy_url,
+                    headers={"User-Agent": settings.USER_AGENT},
+                    timeout=settings.REQUEST_TIMEOUT_SECONDS,
+                    allow_redirects=True,
+                )
+                if resp_reader.ok and resp_reader.text:
+                    up2 = parse_ultipro_from_html(resp_reader.text, url)
+                    if up2.get("title"):
+                        return {
+                            "title": up2.get("title"),
+                            "employer": up2.get("employer") or employer_hint,
+                            "date_posted": None,
+                            "location": None,
+                            "source_site": _extract_source_site(url),
+                        }
+                    if up2.get("employer") and not employer_hint:
+                        employer_hint = up2.get("employer")
+            except Exception:
+                pass
+    except Exception:
+        # Non-fatal: fall back to heuristics
+        pass
+
     # 3) Heuristic fallback
     title = None
     h1 = soup.find("h1")
@@ -113,15 +162,47 @@ def parse_job_from_html(html: str, url: str) -> dict:
         if ext.domain:
             employer = ext.domain.title()[:300]
 
+    # 3b-2) Apply UltiPro employer hint if one was found earlier
+    if not employer and employer_hint:
+        employer = employer_hint[:300]
+
     # 3c) If title still missing (e.g., proxy-reader text), derive from URL slug
     if not title:
         parsed = urlparse(url)
         parts = [p for p in (parsed.path or "/").strip("/").split("/") if p]
         # Remove common non-title segments
-        skip = {"jobs", "job", "careers", "en", "en-us", "en_us", "en-US", "en_US"}
+        skip = {
+            "jobs",
+            "job",
+            "jobboard",
+            "opportunitydetail",
+            "careers",
+            "en",
+            "en-us",
+            "en_us",
+            "en-US",
+            "en_US",
+        }
         def _is_id_segment(seg: str) -> bool:
             return bool(re.fullmatch(r"[rR]?\d{4,}", seg))
-        candidates = [p for p in parts if p not in skip and not _is_id_segment(p)]
+        def _is_guid_like(seg: str) -> bool:
+            # UUID pattern or long hex-with-dashes tokens
+            if re.fullmatch(r"[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", seg):
+                return True
+            compact = re.sub(r"[-_]", "", seg)
+            return len(compact) >= 16 and re.fullmatch(r"[0-9a-fA-F]+", compact) is not None
+        def _is_upper_alnum_token(seg: str) -> bool:
+            # Ignore tenant-ish tokens like VER1018VALLC: upper alnum, fairly long, letters+digits
+            s = re.sub(r"[^A-Za-z0-9]", "", seg)
+            if len(s) >= 6 and s.upper() == s:
+                has_alpha = re.search(r"[A-Za-z]", s) is not None
+                has_digit = re.search(r"[0-9]", s) is not None
+                return has_alpha and has_digit
+            return False
+        candidates = [
+            p for p in parts
+            if p.lower() not in skip and not _is_id_segment(p) and not _is_guid_like(p) and not _is_upper_alnum_token(p)
+        ]
         seg: Optional[str] = None
         for s in reversed(candidates):
             if "-" in s or "_" in s:

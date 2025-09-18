@@ -123,6 +123,8 @@ def add(
 def list_cmd(status: Optional[Status] = typer.Option(None, help="Filter by status")):
     settings = get_settings()
     items = xl_list(settings.EXCEL_PATH, status=status)
+    # Show oldest first so the most recent appears at the bottom
+    items = list(reversed(items))
     if not items:
         typer.secho("No applications found.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=0)
