@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from tldextract import extract as tldextract_extract
 from .sites.greenhouse import parse_greenhouse_from_url
 from .sites.ultipro import parse_ultipro_from_html
+from .sites.linkedin import parse_linkedin_from_html
 from urllib.parse import urlparse
 import re
 import requests
@@ -126,6 +127,45 @@ def parse_job_from_html(html: str, url: str) -> dict:
                 pass
     except Exception:
         # Non-fatal: fall back to heuristics
+        pass
+
+    # 2c) LinkedIn job pages: extract employer from page JSON/markup or proxy-reader
+    try:
+        ext = tldextract_extract(url)
+        if ext.domain == "linkedin":
+            li = parse_linkedin_from_html(html, url)
+            if li.get("title") or li.get("employer"):
+                return {
+                    "title": li.get("title"),
+                    "employer": li.get("employer"),
+                    "date_posted": None,
+                    "location": None,
+                    "source_site": _extract_source_site(url),
+                }
+            # Forced reader proxy, then retry
+            settings = get_settings()
+            proxy_base = (settings.FETCH_PROXY_READER or "").strip() or "https://r.jina.ai"
+            try:
+                proxy_url = proxy_base.rstrip("/") + "/" + url
+                resp_reader = requests.get(
+                    proxy_url,
+                    headers={"User-Agent": settings.USER_AGENT},
+                    timeout=settings.REQUEST_TIMEOUT_SECONDS,
+                    allow_redirects=True,
+                )
+                if resp_reader.ok and resp_reader.text:
+                    li2 = parse_linkedin_from_html(resp_reader.text, url)
+                    if li2.get("title") or li2.get("employer"):
+                        return {
+                            "title": li2.get("title"),
+                            "employer": li2.get("employer"),
+                            "date_posted": None,
+                            "location": None,
+                            "source_site": _extract_source_site(url),
+                        }
+            except Exception:
+                pass
+    except Exception:
         pass
 
     # 3) Heuristic fallback

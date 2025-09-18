@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "application-tracker"
-version = "0.1.0"
+version = "0.1.2"
 description = "CLI to track job applications by scraping job postings and storing in an Excel workbook (.xlsx)."
 readme = "README.md"
 authors = [{ name = "Your Name", email = "you@example.com" }]
