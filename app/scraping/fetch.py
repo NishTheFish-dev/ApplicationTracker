@@ -91,14 +91,13 @@ def fetch_url(url: str) -> str:
                 return resp2.text
 
         # If still blocked and a proxy-reader is configured, try that as a last resort
-        proxy_base = (settings.FETCH_PROXY_READER or "").strip()
-        if proxy_base:
-            # Many reader services accept the original URL appended as path, e.g.
-            #   https://r.jina.ai/https://example.com/page
-            proxy_url = proxy_base.rstrip("/") + "/" + url
-            resp3 = requests.get(proxy_url, headers=base_headers, timeout=timeout, allow_redirects=True)
-            resp3.raise_for_status()
-            return resp3.text
+        proxy_base = (settings.FETCH_PROXY_READER or "").strip() or "https://r.jina.ai"
+        # Many reader services accept the original URL appended as path, e.g.
+        #   https://r.jina.ai/https://example.com/page
+        proxy_url = proxy_base.rstrip("/") + "/" + url
+        resp3 = requests.get(proxy_url, headers=base_headers, timeout=timeout, allow_redirects=True)
+        resp3.raise_for_status()
+        return resp3.text
 
     resp.raise_for_status()
     body = resp.text

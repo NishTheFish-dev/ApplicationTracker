@@ -6,6 +6,7 @@ from tldextract import extract as tldextract_extract
 from .sites.greenhouse import parse_greenhouse_from_url
 from .sites.ultipro import parse_ultipro_from_html
 from .sites.linkedin import parse_linkedin_from_html
+from .sites.icims import parse_icims_from_html
 from urllib.parse import urlparse
 import re
 import requests
@@ -42,6 +43,34 @@ def parse_job_from_html(html: str, url: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     employer_hint: Optional[str] = None
 
+    def _split_title_head(val: Optional[str]) -> Optional[str]:
+        if not isinstance(val, str):
+            return val
+        txt = val.strip()
+        if not txt:
+            return None
+        for sep in [" | ", " - ", " – ", " — "]:
+            if sep in txt:
+                head = txt.split(sep)[0].strip()
+                if head:
+                    return head[:300]
+        return txt[:300]
+
+    def _clean_employer_site_name(name: Optional[str]) -> Optional[str]:
+        if not isinstance(name, str):
+            return None
+        s = name.strip()
+        if not s:
+            return None
+        # Remove common noise words from site names, e.g., "ServiceNow Careers", "Jobs at Foo"
+        s = re.sub(r"\b(careers?|jobs?|job\s*board|recruiting|hiring)\b", "", s, flags=re.IGNORECASE)
+        # Remove linking words like 'at' when used as glue in site names
+        s = re.sub(r"\b(at|with|by)\b", "", s, flags=re.IGNORECASE)
+        # Collapse whitespace and separators
+        s = re.sub(r"[|•·]+", " ", s)
+        s = " ".join(s.split())
+        return s[:300] if s else None
+
     # 2) JSON-LD JobPosting
     for script in soup.find_all("script", type="application/ld+json"):
         try:
@@ -77,7 +106,7 @@ def parse_job_from_html(html: str, url: str) -> dict:
                         or addr.get("addressCountry")
                     )
             return {
-                "title": (title[:300] if isinstance(title, str) else title),
+                "title": (_split_title_head(title) if isinstance(title, str) else title),
                 "employer": (employer[:300] if isinstance(employer, str) else employer),
                 "date_posted": date_posted,
                 "location": (location[:255] if isinstance(location, str) else location),
@@ -129,7 +158,46 @@ def parse_job_from_html(html: str, url: str) -> dict:
         # Non-fatal: fall back to heuristics
         pass
 
-    # 2c) LinkedIn job pages: extract employer from page JSON/markup or proxy-reader
+    # 2c) iCIMS job pages: extract title/employer using site-specific parser or proxy-reader
+    try:
+        ext = tldextract_extract(url)
+        if ext.domain == "icims":
+            ic = parse_icims_from_html(html, url)
+            if ic.get("title") or ic.get("employer"):
+                return {
+                    "title": ic.get("title"),
+                    "employer": ic.get("employer"),
+                    "date_posted": None,
+                    "location": None,
+                    "source_site": _extract_source_site(url),
+                }
+            # Forced reader proxy, then retry
+            settings = get_settings()
+            proxy_base = (settings.FETCH_PROXY_READER or "").strip() or "https://r.jina.ai"
+            try:
+                proxy_url = proxy_base.rstrip("/") + "/" + url
+                resp_reader = requests.get(
+                    proxy_url,
+                    headers={"User-Agent": settings.USER_AGENT},
+                    timeout=settings.REQUEST_TIMEOUT_SECONDS,
+                    allow_redirects=True,
+                )
+                if resp_reader.ok and resp_reader.text:
+                    ic2 = parse_icims_from_html(resp_reader.text, url)
+                    if ic2.get("title") or ic2.get("employer"):
+                        return {
+                            "title": ic2.get("title"),
+                            "employer": ic2.get("employer"),
+                            "date_posted": None,
+                            "location": None,
+                            "source_site": _extract_source_site(url),
+                        }
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 2d) LinkedIn job pages: extract employer from page JSON/markup or proxy-reader
     try:
         ext = tldextract_extract(url)
         if ext.domain == "linkedin":
@@ -168,15 +236,17 @@ def parse_job_from_html(html: str, url: str) -> dict:
     except Exception:
         pass
 
+    # Removed ServiceNow-specific module in favor of generic heuristics above
+
     # 3) Heuristic fallback
     title = None
     h1 = soup.find("h1")
     if h1:
-        title = h1.get_text(strip=True)[:300]
+        title = _split_title_head(h1.get_text(strip=True))
     if not title:
         ogt = soup.find("meta", property="og:title")
         if ogt and ogt.get("content"):
-            title = ogt["content"][:300]
+            title = _split_title_head(ogt["content"])
 
     # 3a) Fallback to <title> tag if still missing
     if not title and soup.title and soup.title.string:
@@ -194,7 +264,9 @@ def parse_job_from_html(html: str, url: str) -> dict:
     employer = None
     site_name = soup.find("meta", property="og:site_name")
     if site_name and site_name.get("content"):
-        employer = site_name["content"][:300]
+        cleaned = _clean_employer_site_name(site_name.get("content"))
+        if cleaned:
+            employer = cleaned[:300]
 
     # 3b) If employer still missing, infer from hostname (e.g., careers.caterpillar.com -> Caterpillar)
     if not employer:
